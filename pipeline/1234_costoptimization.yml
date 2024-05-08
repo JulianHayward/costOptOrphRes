@@ -1,0 +1,70 @@
+trigger: none
+
+pr: none
+
+# schedules:
+# - cron: "0 0,12 * * *"
+#   displayName: every 12h
+#   always: true
+#   branches:
+#     include:
+#     - main
+
+parameters:
+  - name: SubscriptionIdsParameter
+    type: object
+    default:
+      - subId1
+      - subId2
+
+variables:
+  - name: ServiceConnection
+    value: 'sc_1234_costoptimization'
+
+  - name: ScriptDir
+    value: pwsh
+
+  - name: Script
+    value: 1234_costoptimization.ps1
+
+  - name: SubscriptionId4AzContext
+    value: 'subId'
+
+  - name: SubscriptionIds
+    value: ${{ join(',',parameters.SubscriptionIdsParameter) }}
+
+jobs:
+- job: CostOptimization
+  timeoutInMinutes: 0
+
+  pool:
+    vmImage: 'ubuntu-22.04'
+
+  steps:
+  - checkout: self
+    fetchDepth: 1
+
+  - task: AzurePowerShell@5
+    inputs:
+      azureSubscription: '$(ServiceConnection)'
+      scriptType: filePath
+      pwsh: true
+      scriptPath: '$(System.DefaultWorkingDirectory)/$(ScriptDir)/$(Script)'
+      scriptArguments: -SubscriptionId4AzContext $(SubscriptionId4AzContext) -SubscriptionIds $(SubscriptionIds)
+      azurePowerShellVersion: latestVersion
+    displayName: 'Run 1234_CostOptimization'
+
+  - pwsh: |
+      write-host "#################################"
+      write-host "Push 1234_CostOptimization output to repository"
+      write-host "#################################"
+      $executionDateTimeInternationalReadable = get-date -format "dd-MMM-yyyy HH:mm:ss"
+      $currentTimeZone = (Get-TimeZone).Id
+      git config --global user.email "1234_CostOptimizationPipeline@azdo.com"
+      $PipelineInfo = "Pipeline: '$(Build.DefinitionName)' 'rev $(Build.BuildNumber)' (Project: $([uri]::EscapeDataString("$(System.TeamProject)")); Repository: $(Build.Repository.Name); Branch: $(Build.SourceBranchName) Commit: $(Build.SourceVersion))"
+      git config --global user.name "$PipelineInfo"
+      git config pull.rebase false
+      git add --all
+      git commit -m "wiki $executionDateTimeInternationalReadable ($currentTimeZone)"
+      git -c http.extraheader="AUTHORIZATION: bearer $(System.AccessToken)" push origin HEAD:$(Build.SourceBranchName)
+    displayName: 'Push 1234_CostOptimization output to repository'
