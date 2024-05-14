@@ -14,8 +14,7 @@ parameters:
   - name: SubscriptionIdsParameter
     type: object
     default:
-      - subId1
-      - subId2
+      - subscriptionId
 
 variables:
   - name: ServiceConnection
@@ -28,10 +27,25 @@ variables:
     value: 1234_costoptimization.ps1
 
   - name: SubscriptionId4AzContext
-    value: 'subId'
+    value: 'subscriptionId'
+
+  - name: Product
+    value: '1234_CostOptimization'
 
   - name: SubscriptionIds
     value: ${{ join(',',parameters.SubscriptionIdsParameter) }}
+
+  - name: NumberCulture
+    value: 'de-DE'
+
+  - name: AzureConsumptionPeriod
+    value: 21
+
+  - name: OutputPath
+    value: 'output'
+
+  - name: CsvDelimiter
+    value: ';'
 
 jobs:
 - job: CostOptimization
@@ -50,21 +64,21 @@ jobs:
       scriptType: filePath
       pwsh: true
       scriptPath: '$(System.DefaultWorkingDirectory)/$(ScriptDir)/$(Script)'
-      scriptArguments: -SubscriptionId4AzContext $(SubscriptionId4AzContext) -SubscriptionIds $(SubscriptionIds)
+      scriptArguments: -SubscriptionId4AzContext $(SubscriptionId4AzContext) -SubscriptionIds $(SubscriptionIds) -AzureConsumptionPeriod $(AzureConsumptionPeriod) -NumberCulture $(NumberCulture) -OutputPath $(OutputPath) -CsvDelimiter '$(CsvDelimiter)' -Product $(Product)
       azurePowerShellVersion: latestVersion
-    displayName: 'Run 1234_CostOptimization'
+    displayName: 'Run $(Product)'
 
   - pwsh: |
       write-host "#################################"
-      write-host "Push 1234_CostOptimization output to repository"
+      write-host "Push output to repository"
       write-host "#################################"
       $executionDateTimeInternationalReadable = get-date -format "dd-MMM-yyyy HH:mm:ss"
       $currentTimeZone = (Get-TimeZone).Id
-      git config --global user.email "1234_CostOptimizationPipeline@azdo.com"
+      git config --global user.email "CostOptimizationPipeline@azdo.com"
       $PipelineInfo = "Pipeline: '$(Build.DefinitionName)' 'rev $(Build.BuildNumber)' (Project: $([uri]::EscapeDataString("$(System.TeamProject)")); Repository: $(Build.Repository.Name); Branch: $(Build.SourceBranchName) Commit: $(Build.SourceVersion))"
       git config --global user.name "$PipelineInfo"
       git config pull.rebase false
       git add --all
       git commit -m "wiki $executionDateTimeInternationalReadable ($currentTimeZone)"
       git -c http.extraheader="AUTHORIZATION: bearer $(System.AccessToken)" push origin HEAD:$(Build.SourceBranchName)
-    displayName: 'Push 1234_CostOptimization output to repository'
+    displayName: 'Push $(Product) output to repository'

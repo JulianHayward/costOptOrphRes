@@ -22,19 +22,22 @@ Param
     # --->
 
     [string]
-    [parameter(ValueFromPipeline)][ValidateSet(';', ',')][string]$CsvDelimiter = ';',
-
-    [string]
-    $DirectorySeparatorChar = [IO.Path]::DirectorySeparatorChar,
-
-    [string]
     $OutputPath = 'output',
 
     [int]
     $AzureConsumptionPeriod = 10,
 
     [int]
-    $ThrottleLimit = 10
+    $ThrottleLimit = 10,
+
+    [string]
+    [parameter(ValueFromPipeline)][ValidateSet(';', ',')][string]$CsvDelimiter = ';',
+
+    [string]
+    $DirectorySeparatorChar = [IO.Path]::DirectorySeparatorChar,
+
+    [ValidateScript({ $_ -cin [cultureinfo]::GetCultures('allCultures').Name })]
+    $NumberCulture = 'en-US'
 )
 
 $Error.clear()
@@ -696,7 +699,7 @@ $uri = "$($azAPICallConf['azAPIEndpointUrls'].ARM)/providers/Microsoft.ResourceG
 $method = 'POST'
 $query = @"
 resourcecontainers
-| where type =~ 'microsoft.resources/subscriptions' and subscriptionId in ($("'{0}'" -f ($SubscriptionIds -join "','")))
+| where type =~ 'microsoft.resources/subscriptions' and properties.state =~ 'Enabled' and properties.subscriptionPolicies.quotaId in ('EnterpriseAgreement_2014-09-01','MSDNDevTest_2014-09-01','MSDN_2014-09-01','PayAsYouGo_2014-09-01') and subscriptionId in ($("'{0}'" -f ($SubscriptionIds -join "','")))
 "@
 
 $bodyObject = @{
@@ -713,6 +716,16 @@ $azapiCallParametersSplat = @{
     currentTask            = $currentTask
 }
 $subscriptionsDetailed = AzAPICall @azapiCallParametersSplat
+
+if ($subscriptionsDetailed.Count -ne $SubscriptionIds.Count) {
+    Write-Host "Only '$($subscriptionsDetailed.Count)' of expected '$($SubscriptionIds.Count)' subscriptions from `$SubscriptionIds were returned from ARG"
+    $compareReturnedVsExpected = Compare-Object -ReferenceObject $SubscriptionIds -DifferenceObject ($subscriptionsDetailed.subscriptionId)
+    Write-Host " Missing Subscriptions: $($compareReturnedVsExpected.InputObject -join ', ')"
+    throw
+}
+else {
+    Write-Host "'$($subscriptionsDetailed.Count)' subscriptions were returned from ARG"
+}
 
 $htSubscriptionsLookup = @{}
 foreach ($subscription in $subscriptionsDetailed) {
@@ -733,10 +746,12 @@ if ($arrayOrphanedResources.Count -gt 0) {
 
     Write-Host "$($arrayOrphanedResources.Count) orphaned resources in $(($orphanedResourcesGroupedBySubscription | Measure-Object).Count) subscription(s) detected"
     Write-Host "AzureConsumptionPeriod: $AzureConsumptionPeriod; AzureConsumptionStartDate: $azureConsumptionStartDate - AzureConsumptionEndDate: $azureConsumptionEndDate"
+    Write-Host " Chosen culture for number formatting: '$NumberCulture'"
+    $numberCultureObject = New-Object System.Globalization.CultureInfo($NumberCulture)
     foreach ($entry in $orphanedResourcesGroupedBySubscription) {
         $subscriptionId = $entry.Name
         $bodyObject = @{
-            type       = 'ActualCost'
+            type       = 'ActualCost' #AmortizedCost, ActualCost
             dataset    = @{
                 granularity = 'none'
                 filter      = @{
@@ -744,7 +759,7 @@ if ($arrayOrphanedResources.Count -gt 0) {
                     dimensions = @{
                         name     = 'ResourceId'
                         operator = 'In'
-                        values   = $entry.Group.Resource
+                        values   = $(if ($entry.Group.Resource.Count -gt 1) { $entry.Group.Resource } else { , @($entry.Group.Resource) }) #,@($entry.Group.Resource) the leading comma is important so, that convertto-json actually created an array element even for only a single entry - else it would create a string, which would make the payload ivalid for the api to process
                     }
 
                 }
@@ -779,7 +794,7 @@ if ($arrayOrphanedResources.Count -gt 0) {
                 to   = "$azureConsumptionEndDate"
             }
         }
-        $bodyJson = $bodyObject | ConvertTo-Json -Depth 99
+        $bodyJson = ConvertTo-Json -Depth 99 $bodyObject
 
         $currentTask = "get cost for SubscriptionId '$subscriptionId' for $($entry.Group.Count) orphaned Resources"
         Write-Host $currentTask
@@ -796,31 +811,31 @@ if ($arrayOrphanedResources.Count -gt 0) {
             listenOn               = 'ContentProperties'
         }
         $costManagementDataFromAPI = AzAPICall @costManagementDataFromAPIParametersSplat
-        Write-Host "$currentTask returned $($costManagementDataFromAPI.properties.rows.Count) cost entries"
+        Write-Host " $currentTask returned $($costManagementDataFromAPI.properties.rows.Count) cost entries"
 
-        $setCulture = [cultureinfo]::currentculture = 'de-DE'
         foreach ($consumptionline in $costManagementDataFromAPI.properties.rows) {
             $hlper = $htSubscriptionsLookup.($consumptionline[1])
 
             $columnNames = $costManagementDataFromAPI.properties.columns.name
             $null = $allCostManagementData.Add([PSCustomObject]@{
 
-                    "$($columnNames[1])"   = $consumptionline[1]
-                    SubscriptionName       = $hlper.name
-                    Responsible            = $hlper.tags.Responsible
-                    SecondaryContact       = $hlper.tags.SecondaryContact
-                    TechnicalContact       = $hlper.tags.TechnicalContact
-                    OrganizationalDivision = $hlper.tags.OrganizationalDivision
-                    quotaId                = $hlper.properties.subscriptionPolicies.quotaId
-                    ManagementGroup        = $hlper.properties.managementGroupAncestorsChain[0].name
+                    "$($columnNames[1])"                   = $consumptionline[1]
+                    SubscriptionName                       = $hlper.name
+                    Responsible                            = $hlper.tags.Responsible
+                    SecondaryContact                       = $hlper.tags.SecondaryContact
+                    TechnicalContact                       = $hlper.tags.TechnicalContact
+                    OrganizationalDivision                 = $hlper.tags.OrganizationalDivision
+                    quotaId                                = $hlper.properties.subscriptionPolicies.quotaId
+                    ManagementGroup                        = $hlper.properties.managementGroupAncestorsChain[0].name
                     #SubscriptionMgPath  = $hlper.ParentNameChainDelimited
-                    "$($columnNames[2])"   = $consumptionline[2]
-                    "$($columnNames[3])"   = $consumptionline[3]
-                    resourceName           = ($consumptionline[3] -replace '.*/')
-                    "$($columnNames[4])"   = $consumptionline[4]
-                    "$($columnNames[0])"   = [decimal]$consumptionline[0]
+                    "$($columnNames[2])"                   = $consumptionline[2]
+                    "$($columnNames[3])"                   = $consumptionline[3]
+                    resourceName                           = ($consumptionline[3] -replace '.*/')
+                    "$($columnNames[4])"                   = $consumptionline[4]
+                    "$($columnNames[0])_asIs"              = $consumptionline[0]
                     # PreTaxCostDe           = $([cultureinfo]::currentculture = 'de-DE'; '{0}' -f [decimal]$consumptionline[0])
-                    "$($columnNames[5])"   = $consumptionline[5]
+                    "$($columnNames[0])_$($NumberCulture)" = $consumptionline[0].ToString($numberCultureObject)
+                    "$($columnNames[5])"                   = $consumptionline[5]
                     # "$($columnNames[5])"  = $consumptionline[5]
                     # "$($columnNames[6])"  = $consumptionline[6]
                     # "$($columnNames[7])"  = $consumptionline[7]
@@ -832,14 +847,13 @@ if ($arrayOrphanedResources.Count -gt 0) {
                     # "$($columnNames[13])" = $consumptionline[13]
                     # "$($columnNames[14])" = $consumptionline[14]
                     # "$($columnNames[15])" = $consumptionline[15]
-
                 })
         }
     }
 
     Write-Host "Summary: Found $($allCostManagementData.Count) orphaned/unused Resources cost entries"
     $allCostManagementData | Group-Object -Property ResourceType | Sort-Object -Property Count -Descending | ForEach-Object {
-        Write-Host " $($_.Count) orphaned/unused Resources of type '$($_.Name)' totalCost: $(($_.Group.PreTaxCost | Measure-Object -Sum).Sum)"
+        Write-Host " $($_.Count) orphaned/unused Resources of type '$($_.Name)' totalCost: $(($_.Group.PreTaxCost_asIs | Measure-Object -Sum).Sum)"
     }
     Write-Host "Exporting OrphanedResources with cost CSV '$($outputPath)$($DirectorySeparatorChar)$($fileName)_orphanedResourcesCost.csv'"
     $allCostManagementData | Sort-Object -Property ResourceId | Export-Csv -Path "$($outputPath)$($DirectorySeparatorChar)$($fileName)_orphanedResourcesCost.csv" -Delimiter "$csvDelimiter" -NoTypeInformation
@@ -848,3 +862,4 @@ if ($arrayOrphanedResources.Count -gt 0) {
 else {
     Write-Host 'No orphaned resources detected'
 }
+
