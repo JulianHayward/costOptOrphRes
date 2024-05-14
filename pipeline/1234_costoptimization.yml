@@ -18,7 +18,7 @@ parameters:
 
 variables:
   - name: ServiceConnection
-    value: 'sc_1234_costoptimization'
+    value: 'serviceConnectionName'
 
   - name: ScriptDir
     value: pwsh
